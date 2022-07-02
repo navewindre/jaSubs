@@ -2,11 +2,12 @@
 A "fork" of [InterSubs](https://github.com/oltodosel/interSubs), but for Japanese **only**.
 
 Interactive subtitles for mpv, that was made to help study Japanese.
+
 Easily tweaked and customizable.
 
 **NOTE:** This project is unstable as for now and has some bugs
 
-[](./example.gif)
+![showcase](./example.gif)
 
 ## Installation
 
@@ -23,7 +24,7 @@ $ pwd
 $ ln -s jaSubs/jaSubs.lua .
 ```
 
-# Notes
+## Notes
 * Issues and Pull Request are highly appreciated
 
 
