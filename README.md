@@ -1,4 +1,6 @@
 # jaSubs
+========
+
 A "fork" of [InterSubs](https://github.com/oltodosel/interSubs), but for Japanese **only**.
 
 Interactive subtitles for mpv, that was made to help study Japanese.
@@ -9,7 +11,19 @@ Easily tweaked and customizable.
 
 ![showcase](./example.gif)
 
+* Supported dictionaries for words:
+  * [Jisho](https://jisho.org)
+  * [Google](https://translate.google.com/)
+  * Offline \t separated dictionary.
+* Supported dictionaries for sentences:
+  * [Google](https://translate.google.com/)
+* Can use multiple dictionaries simultaneously.
+* Reassigning mouse buttons functions in config.
+* Doesn't work with DVD (picture based) subtitles, only the text-based ones.
+  * [Script](https://github.com/oltodosel/extract_n_convert_dvd_bd_subtitles) to convert picture based subtitles into *.srt; also extracts them from *.mkv 
+
 ## Installation
+------------
 
 Clone this repository in your mpv `scripts` folder:
 ```bash
@@ -47,7 +61,7 @@ $ ln -s jaSubs/jaSubs.lua .
 * Point cursor over the word to get popup with translation.
 * F6 to hide/show without exiting.
 
-Buttons bellow may be reassigned in `jaSubs_config.py`
+##### Buttons bellow may be reassigned in `jaSubs_config.py`
 -----
 * Left-click  - show translation in your browser.
 * Right-click - translate whole sentence
