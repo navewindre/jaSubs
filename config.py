@@ -17,8 +17,14 @@ lang_to = 'en'
 # dictionaries to use, one or more
 # or other function's name you might write that will return ([[word, translation]..], [morphology = '', gender = '']) # available:
 #	jisho
+#	google
 #	tab_divided_dict - simple offline dictionary with word \t translation per line
-translation_function_names = ['jisho']
+
+# Online Usage:
+translation_function_names = ['jisho', 'google', 'tab_divided_dict']
+# Offline Usage:
+#translation_function_names = ['tab_divided_dict']
+
 # for automatic switch to Hebrew. Skip if it isn't your language.
 translation_function_names_2 = ['google']
 
@@ -34,7 +40,7 @@ number_of_translations_to_save = 50
 listen_via = 'gtts'
 
 # path to the offline dictionary
-tab_divided_dict_fname = '~/d/python_shit/mpv/scripts/z.dict'
+tab_divided_dict_fname = '~/.config/mpv/scripts/jaSubs/jp.dict'
 # strip <.*?>
 tab_divided_dict_remove_tags_B = True
 
@@ -52,7 +58,7 @@ update_time = .01
 focus_checking_time = .1
 
 # firefox "https://en.wiktionary.org/wiki/${word}"
-show_in_browser = '${BROWSER:-brave} https://translate.google.com/translate_a/single?client=t&sl=ja&tl=en&hl=en&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&ie=UTF-8&oe=UTF-8&otf=1&pc=1&ssel=3&tsel=3&kc=2&q={word}'
+show_in_browser = '${BROWSER:-brave} https://translate.google.com/translate_a/single?client=t&sl=ja&tl=en&hl=en&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&ie=UTF-8&oe=UTF-8&otf=1&pc=1&ssel=3&tsel=3&kc=2&q=${word}'
 
 # for going through lines step by step
 # skip pausing when subs are less then X words

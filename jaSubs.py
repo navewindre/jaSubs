@@ -29,7 +29,7 @@ tokenizer_obj = dictionary.Dictionary().create()
 
 pth = os.path.expanduser('~/.config/mpv/scripts/')
 os.chdir(pth)
-import jaSubs_config as config
+import config as config
 
 # returns ([[word: reading, translation]..], [morphology = '', gender = ''])
 # jisho.org

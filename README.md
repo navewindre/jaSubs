@@ -14,7 +14,7 @@ Easily tweaked and customizable.
 * Supported dictionaries for words:
   * [Jisho](https://jisho.org)
   * [Google](https://translate.google.com/)
-  * Offline \t separated dictionary.
+  * Offline \t separated dictionary. (Like the one provided `jp.dict`)
 * Supported dictionaries for sentences:
   * [Google](https://translate.google.com/)
 * Can use multiple dictionaries simultaneously.
@@ -29,13 +29,8 @@ Clone this repository in your mpv `scripts` folder:
 ```bash
 $ cd ~/.config/mpv/scripts
 $ git clone https://github.com/HasanAbbadi/jaSubs
-```
-
-Then make a symlink to the `lua` file:
-```bash
-$ pwd
-~/.config/mpv/scripts
-$ ln -s jaSubs/jaSubs.lua .
+$ ls -a
+. .. jaSubs
 ```
 
 ## Requirements
