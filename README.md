@@ -3,12 +3,12 @@
 
 A "fork" of [InterSubs](https://github.com/oltodosel/interSubs), but for Japanese **only**.
 
-Interactive subtitles for mpv, that was made to help study Japanese.
+Interactive subtitles for [mpv](https://github.com/mpv-player/mpv), that was made to help study Japanese.  
 Easily tweaked and customizable.
 
 **NOTE:** This project is unstable as for now and has some bugs
 
-![showcase](./example.gif)
+![showcase](https://user-images.githubusercontent.com/78548167/177032618-3a592cfd-bab5-4366-8f34-4fb7a27c8503.gif)
 
 * Supported dictionaries for words:
   * [Jisho](https://jisho.org)
