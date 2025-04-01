@@ -367,7 +367,6 @@ class thread_subtitles(QObject):
       if inc * config.update_time > config.focus_checking_time - 0.0001:
         process_output = subprocess.getoutput('xdotool getwindowfocus getwindowname')
         # "Add" - anki add card dialog
-        print(process_output)
         while ( (process_output != 'Add') and 'mpv' not in process_output ) or (config.hide_when_not_fullscreen_B and not mpv_fullscreen_status()) or (os.path.exists(mpv_socket + '_hide')):
           if not was_hidden:
             self.update_subtitles.emit(True, False)
