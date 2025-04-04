@@ -27,6 +27,7 @@ from sudachipy import tokenizer
 from sudachipy import dictionary
 tokenizer_obj = dictionary.Dictionary(dict="full").create(tokenizer.Tokenizer.SplitMode.C)
 
+form = 0
 was_paused = 0
 tthread = 0
 app = 0
@@ -351,6 +352,7 @@ def dir2(name):
 
 class thread_subtitles(QObject):
   update_subtitles = pyqtSignal(bool, bool)
+  update_screen_sig = pyqtSignal()
 
   @pyqtSlot()
   def main(self):
@@ -375,7 +377,7 @@ class thread_subtitles(QObject):
             time.sleep(config.focus_checking_time)
           process_output = subprocess.getoutput('xdotool getwindowfocus getwindowname')
         inc = 0
-      update_screen()
+        self.update_screen_sig.emit()
       inc += 1
 
       if was_hidden:
@@ -387,7 +389,7 @@ class thread_subtitles(QObject):
         tmp_file_subs = open(sub_file).read()
       except:
         continue
-      
+
       if config.extend_subs_duration2max_B and not len(tmp_file_subs):
         if not config.extend_subs_duration_limit_sec:
           continue
@@ -689,6 +691,7 @@ class main_class(QWidget):
     self.thread_subs = QThread()
     self.obj = thread_subtitles()
     self.obj.update_subtitles.connect(self.render_subtitles)
+    self.obj.update_screen_sig.connect(update_screen)
     self.obj.moveToThread(self.thread_subs)
     self.thread_subs.started.connect(self.obj.main)
     self.thread_subs.start()
@@ -855,7 +858,6 @@ class main_class(QWidget):
     self.subtitles2.show()
 
 
-
   class TranslationThread(QThread):
     translation_done = pyqtSignal(str, bool, list)
 
@@ -1007,6 +1009,8 @@ def update_screen():
   if not mpv_fullscreen_status():
     mpv_id = subprocess.getoutput('xdotool search --class mpv')
     process_output = subprocess.getoutput('xdotool getwindowgeometry ' + mpv_id)
+    if 'invalid' in process_output:
+      return
     pos = re.search(r"Position:\s*(\d+),(\d+)", process_output)
     size = re.search(r"Geometry:\s*(\d+)x(\d+)", process_output)
     x = 0
@@ -1018,20 +1022,22 @@ def update_screen():
 
     if 'x' in locals():
       config.screen_start = x
-    else:
+    elif not config.screen_start:
       config.screen_start = 0;
     if 'y' in locals() and 'h' in locals():
       config.screen_height = y + h
-    else:
+    elif not config.screen_height:
       config.screen_height = app.primaryScreen().geometry().height()
     if 'w' in locals():
       config.screen_width = w
-    else:
+    elif not config.screen_width:
       config.screen_width = app.primaryScreen().geometry().width()
   else:
     config.screen_start = app.primaryScreen().geometry().topLeft().x()
     config.screen_width = app.primaryScreen().size().width()
     config.screen_height = app.primaryScreen().size().height()
+
+  form.obj.update_subtitles.emit(False, True)
 
 if __name__ == "__main__":
   print('[py part] Starting jaSubs ...')
@@ -1057,7 +1063,7 @@ if __name__ == "__main__":
   config.block_popup = False
   config.scroll = {}
   config.queue_to_translate = queue.Queue()
-  update_screen()
 
   form = main_class()
+  update_screen()
   app.exec_()
