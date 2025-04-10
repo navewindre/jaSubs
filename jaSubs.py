@@ -18,18 +18,27 @@ from json.decoder import JSONDecodeError
 import warnings
 from six.moves import urllib
 
-from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal, pyqtSlot, QSize
+from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal, pyqtSlot, QSize, QEvent
 from PyQt5.QtWidgets import QApplication, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QWidget
 from PyQt5.QtGui import QPalette, QPaintEvent, QPainter, QPainterPath, QFont, QFontMetrics, QColor, QPen, QBrush
 
 # Import Japanese tokinizer
 from sudachipy import tokenizer
 from sudachipy import dictionary
-tokenizer_obj = dictionary.Dictionary().create()
+tokenizer_obj = dictionary.Dictionary(dict="full").create(tokenizer.Tokenizer.SplitMode.C)
+
+form = 0
+was_paused = 0
+tthread = 0
+app = 0
+current_text = ''
 
 pth = os.path.expanduser('~/.config/mpv/scripts/')
 os.chdir(pth)
 import config as config
+
+def katakana_to_hiragana(text):
+  return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ン" else c for c in text)
 
 # returns ([[word: reading, translation]..], [morphology = '', gender = ''])
 # jisho.org
@@ -260,6 +269,18 @@ def google(word):
 
   return pairs, ['', '']
 
+def pause_on_popup():
+  global was_paused
+  if mpv_pause_status():
+    was_paused = 1
+  mpv_pause()
+
+def resume_on_popup():
+  global was_paused
+  if not was_paused:
+    mpv_resume()
+  was_paused = 0
+
 def mpv_pause():
   os.system('echo \'{ "command": ["set_property", "pause", true] }\' | socat - "' + mpv_socket + '" > /dev/null')
 
@@ -331,6 +352,7 @@ def dir2(name):
 
 class thread_subtitles(QObject):
   update_subtitles = pyqtSignal(bool, bool)
+  update_screen_sig = pyqtSignal()
 
   @pyqtSlot()
   def main(self):
@@ -343,16 +365,19 @@ class thread_subtitles(QObject):
 
     while 1:
       time.sleep(config.update_time)
-
       # hide subs when mpv isn't in focus or in fullscreen
       if inc * config.update_time > config.focus_checking_time - 0.0001:
-        while 'mpv' not in subprocess.getoutput('xdotool getwindowfocus getwindowname') or (config.hide_when_not_fullscreen_B and not mpv_fullscreen_status()) or (os.path.exists(mpv_socket + '_hide')):
+        process_output = subprocess.getoutput('xdotool getwindowfocus getwindowname')
+        # "Add" - anki add card dialog
+        while ( (process_output != 'Add') and 'mpv' not in process_output ) or (config.hide_when_not_fullscreen_B and not mpv_fullscreen_status()) or (os.path.exists(mpv_socket + '_hide')):
           if not was_hidden:
             self.update_subtitles.emit(True, False)
             was_hidden = 1
           else:
             time.sleep(config.focus_checking_time)
+          process_output = subprocess.getoutput('xdotool getwindowfocus getwindowname')
         inc = 0
+        self.update_screen_sig.emit()
       inc += 1
 
       if was_hidden:
@@ -364,7 +389,7 @@ class thread_subtitles(QObject):
         tmp_file_subs = open(sub_file).read()
       except:
         continue
-      
+
       if config.extend_subs_duration2max_B and not len(tmp_file_subs):
         if not config.extend_subs_duration_limit_sec:
           continue
@@ -385,14 +410,11 @@ class thread_subtitles(QObject):
           auto_pause_2_ind = 0
 
         subs = tmp_file_subs
-
         if config.auto_pause == 1:
           if len(re.sub(' +', ' ', stripsd2(subs.replace('\n', ' '))).split(' ')) > config.auto_pause_min_words - 1:
             mpv_pause()
 
         self.update_subtitles.emit(False, False)
-
-        break
 
 class thread_translations(QObject):
   get_translations = pyqtSignal(str, int, bool)
@@ -516,12 +538,16 @@ class events_class(QLabel):
   mouseHover = pyqtSignal(str, int, bool)
   redraw = pyqtSignal(bool, bool)
 
-  def __init__(self, word, subs, skip = False, parent=None):
+  def __init__(self, word, subs, skip = False, parent=None, reading=None):
     super().__init__(word)
     self.setMouseTracking(True)
     self.word = word
     self.subs = subs
     self.skip = skip
+    if reading is not None:
+      self.reading = reading
+    else:
+      self.reading = ""
     self.highlight = False
 
     self.setStyleSheet('background: transparent; color: transparent;')
@@ -607,6 +633,9 @@ class events_class(QLabel):
     config.avoid_resuming = True
     os.system(config.show_in_browser.replace('${word}', self.word))
 
+  def f_copy_reading(self, event):
+    os.system('echo "' + self.reading + '" | xclip -selection clipboard')
+
   def f_auto_pause_options(self, event):
     if config.auto_pause == 2:
       config.auto_pause = 0
@@ -648,13 +677,21 @@ class events_class(QLabel):
     config.auto_pause_min_words += 1
     mpv_message('auto_pause_min_words: %d' % config.auto_pause_min_words)
 
+
 class main_class(QWidget):
+  class PopupThread(QThread):
+    def setPopup(self, popup):
+      self.popup = popup
+    def run(self):
+      self.popup.show()
+
   def __init__(self):
     super().__init__()
 
     self.thread_subs = QThread()
     self.obj = thread_subtitles()
     self.obj.update_subtitles.connect(self.render_subtitles)
+    self.obj.update_screen_sig.connect(update_screen)
     self.obj.moveToThread(self.thread_subs)
     self.thread_subs.started.connect(self.obj.main)
     self.thread_subs.start()
@@ -713,12 +750,11 @@ class main_class(QWidget):
     self.subtitles_vbox2.setContentsMargins(0, 0, 0, 0)
 
     if config.pause_during_translation_B:
-      self.subtitles2.enterEvent = lambda event : [mpv_pause(), setattr(config, 'block_popup', False)][0]
-      self.subtitles2.leaveEvent = lambda event : [mpv_resume(), setattr(config, 'block_popup', True)][0] if not config.avoid_resuming else [setattr(config, 'avoid_resuming', False), setattr(config, 'block_popup', True)][0]
+      self.subtitles2.enterEvent = lambda event : [pause_on_popup(), setattr(config, 'block_popup', False)][0]
+      self.subtitles2.leaveEvent = lambda event : [resume_on_popup(), setattr(config, 'block_popup', True)][0] if not config.avoid_resuming else [setattr(config, 'avoid_resuming', False), setattr(config, 'block_popup', True)][0]
 
   def popup_base(self):
     self.popup = QFrame()
-    self.popup.setAttribute(Qt.WA_TranslucentBackground)
     self.popup.setWindowFlags(Qt.X11BypassWindowManagerHint)
     self.popup.setStyleSheet(config.style_popup)
 
@@ -750,6 +786,8 @@ class main_class(QWidget):
       # if subtitle consists of one overly long line - split into two
       if config.split_long_lines_B and len(subs.split('\n')) == 1 and len(subs.split(' ')) > config.split_long_lines_words_min - 1:
         subs2 = split_long_lines(subs)
+      elif config.split_long_lines_B and len(subs) > config.split_long_lines_chars_min - 1:
+        subs2 = split_long_lines(subs, config.split_long_lines_chars_min)
       else:
         subs2 = subs
 
@@ -779,13 +817,16 @@ class main_class(QWidget):
         line2 += '\00'
 
         # Japanese Fix
-        mode = tokenizer.Tokenizer.SplitMode.A
-        line2 = [m.surface() for m in tokenizer_obj.tokenize(line2, mode)]
+        mode = tokenizer.Tokenizer.SplitMode.C
+        tokens = tokenizer_obj.tokenize(line2, mode)
+        line2 = [m.surface() for m in tokens]
+        readings = [m.reading_form() for m in tokens]
 
-        for smbl in line2:
+        for i in range(len(line2)):
+          smbl = line2[i]
           word = smbl
           if smbl.isalpha():
-            ll = events_class(word, subs2)
+            ll = events_class(word, subs2, reading=katakana_to_hiragana(readings[i]))
             ll.mouseHover.connect(self.render_popup)
             ll.redraw.connect(self.render_subtitles)
 
@@ -803,7 +844,7 @@ class main_class(QWidget):
     w = self.subtitles.geometry().width()
     h = self.subtitles.height = self.subtitles.geometry().height()
 
-    x = (config.screen_width/2) - (w/2)
+    x = (config.screen_width/2) - (w/2) + config.screen_start
 
     if config.subs_top_placement_B:
       y = config.subs_screen_edge_padding
@@ -816,140 +857,187 @@ class main_class(QWidget):
     self.subtitles2.setGeometry(int(x), int(y), 0, 0)
     self.subtitles2.show()
 
+
+  class TranslationThread(QThread):
+    translation_done = pyqtSignal(str, bool, list)
+
+    def __init__(self, text, is_line, parent=None):
+      super().__init__(parent)
+      self.text = text
+      self.is_line = is_line
+
+    def run(self):
+      if self.is_line:
+        line = globals()[config.translation_function_name_full_sentence](self.text)
+        if config.translation_function_name_full_sentence == 'google':
+          try:
+            line = line[0][0][0].strip()
+          except:
+            line = 'Google translation failed.'
+            if config.split_long_lines_B and len(line.split('\n')) == 1 and len(line.split(' ')) > config.split_long_lines_words_min - 1:
+              line = split_long_lines(line)
+            self.translation_done.emit(line, True, [])
+      else:
+        word = self.text
+        translations = []
+        for translation_function_name in config.translation_function_names:
+          pairs, word_descr = globals()[translation_function_name](word)
+          if not pairs:
+            pairs = [['', '[Not found]']]
+          translations.append((pairs, word_descr))
+          self.translation_done.emit(word, False, translations)
+
   def render_popup(self, text, x_cursor_pos, is_line):
+    global tthread
+    global app
+    global current_text
+    if len(current_text) and text == current_text and hasattr(self, 'popup') and self.popup.isVisible():
+      return
     if text == '':
       if hasattr(self, 'popup'):
         self.popup.hide()
       return
 
-    self.clearLayout('popup')
+    current_text = text
+    QApplication.setOverrideCursor(Qt.WaitCursor)
 
-    if is_line:
-      QApplication.setOverrideCursor(Qt.WaitCursor)
-      
-      line = globals()[config.translation_function_name_full_sentence](text)
-      if config.translation_function_name_full_sentence == 'google':
-        try:
-          line = line[0][0][0].strip()
-        except:
-          line = 'Google translation failed.'
-      
-      if config.split_long_lines_B and len(line.split('\n')) == 1 and len(line.split(' ')) > config.split_long_lines_words_min - 1:
-        line = split_long_lines(line)
-
-      ll = QLabel(line)
-      ll.setObjectName("first_line")
-      self.popup_vbox.addWidget(ll)
-    else:
+    def update_popup(result, is_line, data):
+      self.clearLayout('popup')
       word = text
+      if is_line:
+        ll = QLabel(result)
+        ll.setObjectName("first_line")
+        self.popup_vbox.addWidget(ll)
+      else:
+        for translation_function_name_i, (pairs, word_descr) in enumerate(data):
+          for i1, pair in enumerate(pairs[:config.number_of_translations]):
+            if type(pair) == type(''):
+              continue
+            if config.split_long_lines_in_popup_B:
+              pair[0] = split_long_lines(pair[0], max_symbols_per_line = config.split_long_lines_in_popup_symbols_min)
+              pair[1] = split_long_lines(pair[1], max_symbols_per_line = config.split_long_lines_in_popup_symbols_min)
 
-      for translation_function_name_i, translation_function_name in enumerate(config.translation_function_names):
-        pairs, word_descr = globals()[translation_function_name](word)
+            if pair[0] == '-':
+              pair[0] = ''
+            if pair[1] == '-':
+              pair[1] = ''
 
-        if not len(pairs):
-          pairs = [['', '[Not found]']]
-          #return
+            if pair[0] != '':
+              # to emphasize the exact form of the word
+              # to ignore case on input and match it on output
+              chnks = re.split(word, pair[0], flags = re.I)
+              exct_words = re.findall(word, pair[0], flags = re.I)
 
-        # ~pairs = [ [ str(i) + ' ' + pair[0], pair[1] ] for i, pair in enumerate(pairs) ]
+              hbox = QHBoxLayout()
+              hbox.setContentsMargins(0, 0, 0, 0)
 
-        if word in config.scroll:
-          if len(pairs[config.scroll[word]:]) > config.number_of_translations:
-            pairs = pairs[config.scroll[word]:]
-          else:
-            pairs = pairs[-config.number_of_translations:]
-            if len(config.translation_function_names) == 1:
-              config.scroll[word] -= 1
+              for i2, chnk in enumerate(chnks):
+                if len(chnk):
+                  ll = QLabel(chnk)
+                  ll.setObjectName("first_line")
+                  hbox.addWidget(ll)
+                if i2 + 1 < len(chnks):
+                  ll = QLabel(exct_words[i2])
+                  ll.setObjectName("first_line_emphasize_word")
+                  hbox.addWidget(ll)
 
-        for i1, pair in enumerate(pairs):
-          if i1 == config.number_of_translations:
-            break
+              # filling the rest of the line with empty bg
+              ll = QLabel()
+              ll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+              hbox.addWidget(ll)
 
-          if config.split_long_lines_in_popup_B:
-            pair[0] = split_long_lines(pair[0], max_symbols_per_line = config.split_long_lines_in_popup_symbols_min)
-            pair[1] = split_long_lines(pair[1], max_symbols_per_line = config.split_long_lines_in_popup_symbols_min)
+              self.popup_vbox.addLayout(hbox)
 
-          if pair[0] == '-':
-            pair[0] = ''
-          if pair[1] == '-':
-            pair[1] = ''
+            if pair[1] != '':
+              ll = QLabel(pair[1])
+              ll.setObjectName("second_line")
+              self.popup_vbox.addWidget(ll)
 
-          if pair[0] != '':
-            # to emphasize the exact form of the word
-            # to ignore case on input and match it on output
-            chnks = re.split(word, pair[0], flags = re.I)
-            exct_words = re.findall(word, pair[0], flags = re.I)
+              # padding
+              ll = QLabel()
+              ll.setStyleSheet("font-size: 6px;")
+              self.popup_vbox.addWidget(ll)
 
-            hbox = QHBoxLayout()
-            hbox.setContentsMargins(0, 0, 0, 0)
-
-            for i2, chnk in enumerate(chnks):
-              if len(chnk):
-                ll = QLabel(chnk)
-                ll.setObjectName("first_line")
-                hbox.addWidget(ll)
-              if i2 + 1 < len(chnks):
-                ll = QLabel(exct_words[i2])
-                ll.setObjectName("first_line_emphasize_word")
-                hbox.addWidget(ll)
-
-            # filling the rest of the line with empty bg
-            ll = QLabel()
-            ll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            hbox.addWidget(ll)
-
-            self.popup_vbox.addLayout(hbox)
-
-          if pair[1] != '':
-            ll = QLabel(pair[1])
-            ll.setObjectName("second_line")
+          if len(word_descr[0]):
+            ll = QLabel(word_descr[0])
+            ll.setProperty("morphology", word_descr[1])
+            ll.setAlignment(Qt.AlignRight)
             self.popup_vbox.addWidget(ll)
 
-            # padding
+          # delimiter between dictionaries
+          if translation_function_name_i + 1 < len(config.translation_function_names):
             ll = QLabel()
-            ll.setStyleSheet("font-size: 6px;")
+            ll.setObjectName("delimiter")
             self.popup_vbox.addWidget(ll)
 
-        if len(word_descr[0]):
-          ll = QLabel(word_descr[0])
-          ll.setProperty("morphology", word_descr[1])
-          ll.setAlignment(Qt.AlignRight)
-          self.popup_vbox.addWidget(ll)
+        app.sendPostedEvents()
 
-        # delimiter between dictionaries
-        if translation_function_name_i + 1 < len(config.translation_function_names):
-          ll = QLabel()
-          ll.setObjectName("delimiter")
-          self.popup_vbox.addWidget(ll)
+        self.popup_inner.adjustSize()
+        self.popup.adjustSize()
 
-    self.popup_inner.adjustSize()
-    self.popup.adjustSize()
+        w = self.popup.geometry().width()
+        h = self.popup.geometry().height()
 
-    w = self.popup.geometry().width()
-    h = self.popup.geometry().height()
+        if w > config.screen_width:
+          w = config.screen_width - 20
 
-    if w > config.screen_width:
-      w = config.screen_width - 20
+        if x_cursor_pos == -1:
+          x = config.screen_start + (config.screen_width/2) - (w/2)
+        else:
+          x = x_cursor_pos - w/2
+          if x+w - config.screen_start > config.screen_width:
+            x = config.screen_start + config.screen_width - w
 
-    if not is_line:
-      if w < config.screen_width / 3:
-        w = config.screen_width / 3
+        if config.subs_top_placement_B:
+          y = self.subtitles.height + config.subs_screen_edge_padding
+        else:
+          y = config.screen_height - config.subs_screen_edge_padding - self.subtitles.height - h - 20
 
-    if x_cursor_pos == -1:
-      x = (config.screen_width/2) - (w/2)
-    else:
-      x = x_cursor_pos - w/5
-      if x+w > config.screen_width:
-        x = config.screen_width - w
+        self.popup.setGeometry(int(x), int(y), int(w), int(0))
+        # without this the window flickers for a split second over the subtitles
+        # causing it to get stuck in a loop of opening and closing the popup
+        app.sendPostedEvents()
+        self.popup.show()
+        QApplication.restoreOverrideCursor()
 
-    if config.subs_top_placement_B:
-      y = self.subtitles.height + config.subs_screen_edge_padding
-    else:
-      y = config.screen_height - config.subs_screen_edge_padding - self.subtitles.height - h
 
-    self.popup.setGeometry(int(x), int(y), int(w), 0)
-    self.popup.show()
+    tthread = self.TranslationThread(text, is_line)
+    tthread.translation_done.connect(update_popup)
+    tthread.start()
 
-    QApplication.restoreOverrideCursor()
+def update_screen():
+  if not mpv_fullscreen_status():
+    mpv_id = subprocess.getoutput('xdotool search --class mpv')
+    process_output = subprocess.getoutput('xdotool getwindowgeometry ' + mpv_id)
+    if 'invalid' in process_output:
+      return
+    pos = re.search(r"Position:\s*(\d+),(\d+)", process_output)
+    size = re.search(r"Geometry:\s*(\d+)x(\d+)", process_output)
+    x = 0
+    y = 0
+    if pos:
+      x, y = map(int, pos.groups())
+    if size:
+      w, h = map(int, size.groups())
+
+    if 'x' in locals():
+      config.screen_start = x
+    elif not config.screen_start:
+      config.screen_start = 0;
+    if 'y' in locals() and 'h' in locals():
+      config.screen_height = y + h
+    elif not config.screen_height:
+      config.screen_height = app.primaryScreen().geometry().height()
+    if 'w' in locals():
+      config.screen_width = w
+    elif not config.screen_width:
+      config.screen_width = app.primaryScreen().geometry().width()
+  else:
+    config.screen_start = app.primaryScreen().geometry().topLeft().x()
+    config.screen_width = app.primaryScreen().size().width()
+    config.screen_height = app.primaryScreen().size().height()
+
+  form.obj.update_subtitles.emit(False, True)
 
 if __name__ == "__main__":
   print('[py part] Starting jaSubs ...')
@@ -975,8 +1063,7 @@ if __name__ == "__main__":
   config.block_popup = False
   config.scroll = {}
   config.queue_to_translate = queue.Queue()
-  config.screen_width = app.primaryScreen().size().width()
-  config.screen_height = app.primaryScreen().size().height()
 
   form = main_class()
+  update_screen()
   app.exec_()

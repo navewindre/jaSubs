@@ -41,7 +41,7 @@ $ ls -a
    * python-pyqt5
    * python-numpy
    * python-requests
-   * `sudachipy` and `sudachidict_core` (likely installed with `pip`)
+   * `sudachipy` and `sudachidict_full` (likely installed with `pip`)
    * lua
    * socat
    * pkill
