@@ -10,6 +10,8 @@ import threading, queue
 import calendar, math, base64
 import numpy
 import ast
+import hashlib
+import json as jsonlib
 
 from urllib.parse import quote
 from json import loads
@@ -33,6 +35,7 @@ tthread = 0
 app = 0
 current_text = ''
 
+
 pth = os.path.expanduser('~/.config/mpv/scripts/')
 os.chdir(pth)
 import config as config
@@ -40,27 +43,40 @@ import config as config
 def katakana_to_hiragana(text):
   return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ン" else c for c in text)
 
+jisho_cache_file="./jisho_cache.json"
+if os.path.exists(jisho_cache_file):
+    with open(jisho_cache_file, 'r', encoding='utf-8') as f:
+        try:
+            cache = jsonlib.load(f)
+        except:
+            cache = {}
+else:
+    cache = {}
+
 # returns ([[word: reading, translation]..], [morphology = '', gender = ''])
 # jisho.org
 def jisho(word):
-    DOMAIN = 'jisho.org'
-    VERSION = '1'
-
+    DOMAIN='jisho.org'
+    VERSION=1
     base_url = f'https://{DOMAIN}/api/v{VERSION}'
-
     def get(url, params=None):
         if params is None:
             params = {}
 
-        response = requests.get(
-            url,
-            params=params,
-        )
+        key = hashlib.sha256((url + jsonlib.dumps(params, sort_keys=True)).encode()).hexdigest()
 
-        json = response.json()
-        if response.status_code != 200:
-            raise APIException(response.status_code,
-                               response.content.decode())
+        if key in cache:
+            json = cache[key]
+        else:
+            response = requests.get(url, params=params)
+            if response.status_code != 200:
+                raise APIException(response.status_code, response.content.decode())
+
+            json = response.json()
+            cache[key] = json
+
+            with open(jisho_cache_file, 'w', encoding='utf-8') as f:
+                jsonlib.dump(cache, f, ensure_ascii=False, indent=2)
 
         try:
             word = json['data'][0]['japanese'][0]['word'] + ': ' + json['data'][0]['japanese'][0]['reading']
@@ -68,11 +84,10 @@ def jisho(word):
             translations = json['data'][0]['senses'][0]['english_definitions']
             pairs = [[word, '']]
             for definition in translations:
-              pairs.append(['', definition])
-
+                pairs.append(['', definition])
             return pairs, [reading, '']
         except:
-            return  [['No translation Found', ''], ['', '']]
+            return [['No translation Found', ''], ['', '']]
 
     def search(keyword):
         url = f'{base_url}/search/words'
@@ -215,59 +230,85 @@ class TokenAcquirer:
         """
         return (val % 0x100000000) >> n
 
-# translate.google.com
+google_cache_path = './google_cache.json'
+
+# load cache if exists
+if os.path.exists(google_cache_path):
+    with open(google_cache_path, 'r', encoding='utf-8') as f:
+        try:
+            google_cache = jsonlib.load(f)
+        except:
+            google_cache = {}
+else:
+    google_cache = {}
+
 def google(word):
-  word = word.replace('\n', ' ').strip()
-  url = 'https://translate.google.com/translate_a/single?client=t&sl={lang_from}&tl={lang_to}&hl={lang_to}&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&ie=UTF-8&oe=UTF-8&otf=1&pc=1&ssel=3&tsel=3&kc=2&q={word}'.format(lang_from = config.lang_from, lang_to = config.lang_to, word = quote(word))
+    word = word.replace('\n', ' ').strip()
 
-  pairs = []
-  fname = 'urls/' + url.replace('/', "-")
-  try:
-    if ' ' in word:
-      raise Exception('skip saving')
-    
-    p = open(fname).read().split('=====/////-----')
+    if word in google_cache:
+        return google_cache[word], ['', '']
+
+    url = 'https://translate.google.com/translate_a/single?client=t&sl={lang_from}&tl={lang_to}&hl={lang_to}&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&ie=UTF-8&oe=UTF-8&otf=1&pc=1&ssel=3&tsel=3&kc=2&q={word}'.format(
+        lang_from=config.lang_from,
+        lang_to=config.lang_to,
+        word=quote(word)
+    )
+
+    pairs = []
+    fname = 'urls/' + url.replace('/', "-")
     try:
-      word_descr = p[1].strip()
+        if ' ' in word:
+            raise Exception('skip saving')
+
+        p = open(fname).read().split('=====/////-----')
+        try:
+            word_descr = p[1].strip()
+        except:
+            word_descr = ''
+
+        for pi in p[0].strip().split('\n\n'):
+            pi = pi.split('\n')
+            pairs.append([pi[0], pi[1]])
     except:
-      word_descr = ''
+        acquirer = TokenAcquirer()
+        tk = acquirer.do(word)
 
-    for pi in p[0].strip().split('\n\n'):
-      pi = pi.split('\n')
-      pairs.append([pi[0], pi[1]])
-  except:
-    acquirer = TokenAcquirer()
-    tk = acquirer.do(word)
+        url = f'{url}&tk={tk}'
+        p = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.167 Safari/537.36'
+        }).text
+        p = loads(p)
 
-    url = '{url}&tk={tk}'.format(url = url, tk = tk)
-    p = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.167 Safari/537.36'}).text
-    p = loads(p)
+        try:
+            pairs.append([p[0][0][0], p[0][0][1]])
+        except:
+            pass
 
-    try:
-      pairs.append([p[0][0][0], p[0][0][1]])
-    except:
-      pass
+        if p[1] is not None:
+            for translations in p[1]:
+                for translation in translations[2]:
+                    try:
+                        t1 = translation[5] + ' ' + translation[0]
+                    except:
+                        t1 = translation[0]
 
-    if p[1] != None:
-      for translations in p[1]:
-        for translation in translations[2]:
-          try:
-            t1 = translation[5] + ' ' + translation[0]
-          except:
-            t1 = translation[0]
+                    t2 = ', '.join(translation[1])
 
-          t2 = ', '.join(translation[1])
+                    if not len(t1):
+                        t1 = '-'
+                    if not len(t2):
+                        t2 = '-'
 
-          if not len(t1):
-            t1 = '-'
-          if not len(t2):
-            t2 = '-'
+                    pairs.append([t1, t2])
 
-          pairs.append([t1, t2])
+        word_descr = ''
 
-    word_descr = ''
+    # store result in cache and save
+    google_cache[word] = pairs
+    with open(google_cache_path, 'w', encoding='utf-8') as f:
+        jsonlib.dump(google_cache, f, ensure_ascii=False, indent=2)
 
-  return pairs, ['', '']
+    return pairs, ['', '']
 
 def pause_on_popup():
   global was_paused
