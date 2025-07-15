@@ -34,7 +34,7 @@ was_paused = 0
 tthread = 0
 app = 0
 current_text = ''
-
+mutex = threading.Lock()
 
 pth = os.path.expanduser('~/.config/mpv/scripts/')
 os.chdir(pth)
@@ -244,9 +244,10 @@ else:
 
 def google(word):
     word = word.replace('\n', ' ').strip()
-
+    
     if word in google_cache:
-        return google_cache[word], ['', '']
+        retword = google_cache[word]
+        return retword, ['', '']
 
     url = 'https://translate.google.com/translate_a/single?client=t&sl={lang_from}&tl={lang_to}&hl={lang_to}&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&ie=UTF-8&oe=UTF-8&otf=1&pc=1&ssel=3&tsel=3&kc=2&q={word}'.format(
         lang_from=config.lang_from,
@@ -475,10 +476,16 @@ class thread_translations(QObject):
       QApplication.setOverrideCursor(Qt.WaitCursor)
 
       threads = []
+      while mutex.locked():
+          time.sleep(config.update_time)
+
+      mutex.acquire()
       for translation_function_name in config.translation_function_names:
         threads.append(threading.Thread(target = globals()[translation_function_name], args = (word,)))
       for x in threads:
         x.start()
+
+      mutex.release()
       while any(thread.is_alive() for thread in threads):
         if config.queue_to_translate.qsize():
           to_new_word = True
@@ -493,7 +500,9 @@ class thread_translations(QObject):
       if config.block_popup:
         continue
 
+      mutex.acquire()
       self.get_translations.emit(word, globalX, False)
+      mutex.release()
 
 # drawing layer
 # because can't calculate outline with precision
@@ -822,7 +831,9 @@ class main_class(QWidget):
       self.clearLayout('subs2')
 
       if hasattr(self, 'popup'):
+        mutex.acquire()
         self.popup.hide()
+        mutex.release()
 
       # if subtitle consists of one overly long line - split into two
       if config.split_long_lines_B and len(subs.split('\n')) == 1 and len(subs.split(' ')) > config.split_long_lines_words_min - 1:
@@ -917,7 +928,9 @@ class main_class(QWidget):
             line = 'Google translation failed.'
             if config.split_long_lines_B and len(line.split('\n')) == 1 and len(line.split(' ')) > config.split_long_lines_words_min - 1:
               line = split_long_lines(line)
+            mutex.acquire()
             self.translation_done.emit(line, True, [])
+            mutex.release()
       else:
         word = self.text
         translations = []
@@ -926,23 +939,30 @@ class main_class(QWidget):
           if not pairs:
             pairs = [['', '[Not found]']]
           translations.append((pairs, word_descr))
-          self.translation_done.emit(word, False, translations)
+        self.translation_done.emit(word, False, translations)
 
   def render_popup(self, text, x_cursor_pos, is_line):
     global tthread
     global app
     global current_text
+    if mutex.locked():
+        return
+    mutex.acquire();
     if len(current_text) and text == current_text and hasattr(self, 'popup') and self.popup.isVisible():
+      mutex.release()
       return
     if text == '':
-      if hasattr(self, 'popup'):
+      if hasattr(self, 'popup') and self.popup.isVisible():
         self.popup.hide()
+      mutex.release()
       return
 
     current_text = text
     QApplication.setOverrideCursor(Qt.WaitCursor)
 
+
     def update_popup(result, is_line, data):
+      mutex.acquire()
       self.clearLayout('popup')
       word = text
       if is_line:
@@ -1040,11 +1060,17 @@ class main_class(QWidget):
         app.sendPostedEvents()
         self.popup.show()
         QApplication.restoreOverrideCursor()
+      mutex.release()
 
+
+    if tthread:
+      tthread.terminate()
+      tthread.wait()
 
     tthread = self.TranslationThread(text, is_line)
     tthread.translation_done.connect(update_popup)
     tthread.start()
+    mutex.release()
 
 def update_screen():
   if not mpv_fullscreen_status():
