@@ -27,7 +27,7 @@ Easily tweaked and customizable.
 Clone this repository in your mpv `scripts` folder:
 ```bash
 $ cd ~/.config/mpv/scripts
-$ git clone https://github.com/HasanAbbadi/jaSubs
+$ git clone https://github.com/navewindre/jaSubs
 $ ls -a
 . .. jaSubs
 ```
